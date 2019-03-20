@@ -49,7 +49,8 @@ public unsafe struct VertexStruct : IHeapNode, IComparable<VertexStruct>
     private int intAlignment;
     private Allocator vertexAllocatorLabel;
     private Allocator triangleAllocatorLabel;
-
+    public Vector3 Normal;
+    public Vector2 UV;
     public void NewVertexNeighbors(int count, int intSize, int intAlignment, Allocator allocatorLable)
     {
         neightborsCount = count == 0 ? 1 : count;

@@ -213,14 +213,21 @@ public unsafe struct NativeHeap<T> : IDisposable where T : struct, IHeapNode, IC
     /// <param name="val"></param>
     public void ModifyValue(int i, T val)
     {
-        T compareTVal = UnsafeUtility.ReadArrayElement<T>(m_HeapData->mBuffer, i);
-        if (Compare(compareTVal, val, isSmaller))
+        val.HeapIndex = i;
+        UnsafeUtility.WriteArrayElement<T>(m_HeapData->mBuffer, i, val);
+        T heapValue = Heapify(i);
+        if (i != heapValue.HeapIndex)
         {
-            val.HeapIndex = i;
-            UnsafeUtility.WriteArrayElement<T>(m_HeapData->mBuffer, i, val);
-            Heapify(i);
             return;
         }
+        //T compareTVal = UnsafeUtility.ReadArrayElement<T>(m_HeapData->mBuffer, i);
+        //if (Compare(compareTVal, val, isSmaller))
+        //{
+        //    val.HeapIndex = i;
+        //    UnsafeUtility.WriteArrayElement<T>(m_HeapData->mBuffer, i, val);
+        //    Heapify(i);
+        //    return;
+        //}
         val.HeapIndex = i;
         UnsafeUtility.WriteArrayElement<T>(m_HeapData->mBuffer, i, val);
         int p = Parent(i);
@@ -232,8 +239,9 @@ public unsafe struct NativeHeap<T> : IDisposable where T : struct, IHeapNode, IC
         }
     }
 
-    void Heapify(int i)
+    T Heapify(int i)
     {
+        T value = UnsafeUtility.ReadArrayElement<T>(m_HeapData->mBuffer, i);
         int l = Left(i);
         int r = Right(i);
         int m = i;
@@ -249,8 +257,9 @@ public unsafe struct NativeHeap<T> : IDisposable where T : struct, IHeapNode, IC
         if (m != i)
         {
             Swap(i, m);
-            Heapify(m);
+            value = Heapify(m);
         }
+        return value;
     }
     /// <summary>
     /// 交换i和j元素

@@ -26,13 +26,23 @@ namespace Chaos
         public float m_fObjDist; // Cached cost of collapsing edge
         public Vertex m_collapse; // Candidate vertex for collapse
         public bool m_bRuntimeCollapsed;
-
-        public Vertex(Vector3 v, Vector3 v3World, int nID)
+        private Vector2 _uv;
+        private Vector3 _normal;
+        public Vector2 UV
+        {
+            get { return _uv; }
+        }
+        public Vector3 Normal
+        {
+            get { return _normal; }
+        }
+        public Vertex(Vector3 v, Vector3 v3World, int nID,Vector2 uv,Vector3 normal)
         {
             m_v3Position = v;
             m_v3PositionWorld = v3World;
             this.m_nID = nID;
-
+            _uv = uv;
+            _normal = normal;
             m_listNeighbors = new List<Vertex>();
             m_listFaces = new List<Triangle>();
         }

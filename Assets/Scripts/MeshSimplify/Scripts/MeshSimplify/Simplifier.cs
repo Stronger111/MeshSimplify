@@ -58,7 +58,14 @@ namespace Chaos
             get { return m_bProtectTexture; }
             set { m_bProtectTexture = value; }
         }
-
+        public float BorderCurvature
+        {
+            get { return _borderCurvature; }
+            set
+            {
+                _borderCurvature = value;
+            }
+        }
         public bool LockBorder
         {
             get { return m_bLockBorder; }
@@ -180,7 +187,7 @@ namespace Chaos
 
             Vector2[] av2Mapping = m_meshOriginal.uv;
 
-            AddVertices(sourceMesh.vertices, worldVertices);
+            AddVertices(sourceMesh.vertices, worldVertices, sourceMesh);
 
             int nTriangles = 0;
             //                ListIndices[] faceList = m_meshUniqueVertices.SubmeshesFaceList;
@@ -197,9 +204,9 @@ namespace Chaos
 #if UNITY_2018_1_OR_NEWER
                 float[] costs = new float[m_listVertices.Count];
                 int[] collapses = new int[m_listVertices.Count];
-                CostCompution.Compute(m_listVertices, m_aListTriangles, aRelevanceSpheres, m_bUseEdgeLength, m_bUseCurvature, m_bLockBorder, m_fOriginalMeshSize, costs, collapses);
+                CostCompution.Compute(m_listVertices, m_aListTriangles, aRelevanceSpheres, m_bUseEdgeLength, m_bUseCurvature, BorderCurvature, m_fOriginalMeshSize, costs, collapses);
 
-                computeHeapJob.Compute(m_listVertices, m_meshOriginal, m_aListTriangles, aRelevanceSpheres, costs, collapses, m_aVertexPermutation, m_aVertexMap, m_bUseEdgeLength, m_bUseCurvature, m_bLockBorder, m_fOriginalMeshSize);
+                computeHeapJob.Compute(m_listVertices, m_meshOriginal, m_aListTriangles, aRelevanceSpheres, costs, collapses, m_aVertexPermutation, m_aVertexMap, m_bUseEdgeLength, m_bUseCurvature, BorderCurvature, m_fOriginalMeshSize);
 
 #else
                     IEnumerator enumerator = ComputeAllEdgeCollapseCosts(strProgressDisplayObjectName, gameObject.transform, aRelevanceSpheres, progress);
@@ -253,9 +260,9 @@ namespace Chaos
 #if UNITY_2018_1_OR_NEWER
                 float[] costs = new float[m_listVertices.Count];
                 int[] collapses = new int[m_listVertices.Count];
-                CostCompution.Compute(m_listVertices, m_aListTriangles, aRelevanceSpheres, m_bUseEdgeLength, m_bUseCurvature, m_bLockBorder, m_fOriginalMeshSize, costs, collapses);
+                CostCompution.Compute(m_listVertices, m_aListTriangles, aRelevanceSpheres, m_bUseEdgeLength, m_bUseCurvature, BorderCurvature, m_fOriginalMeshSize, costs, collapses);
 
-                computeHeapJob.Compute(m_listVertices, m_meshOriginal, m_aListTriangles, aRelevanceSpheres, costs, collapses, m_aVertexPermutation, m_aVertexMap, m_bUseEdgeLength, m_bUseCurvature, m_bLockBorder, m_fOriginalMeshSize);
+                computeHeapJob.Compute(m_listVertices, m_meshOriginal, m_aListTriangles, aRelevanceSpheres, costs, collapses, m_aVertexPermutation, m_aVertexMap, m_bUseEdgeLength, m_bUseCurvature, BorderCurvature, m_fOriginalMeshSize);
 
 #else
                   yield return StartCoroutine(ComputeAllEdgeCollapseCosts(strProgressDisplayObjectName, gameObject.transform, aRelevanceSpheres, progress));
@@ -655,7 +662,36 @@ namespace Chaos
             //                    }
             //                }
             //#endif
+            //如果有法线 TODO:操作为了
+            if (bNormal)
+            {
+                for (int i = 0; i < n; i++)
+                {
+                    _av3NormalsIn[i] = _av3NormalsIn[i] * 0.1f;
+                }
+                for (int i = 0; i < subMeshCount; i++)
+                {
+                    int[] triangles = _aSubMeshes[i];
+                    for (int j = 0; j < _aTriangleCount[i]; j += 3)
+                    {
+                        int i0 = triangles[j];
+                        int i1 = triangles[j + 1];
+                        int i2 = triangles[j + 2];
+                        Vector3 v0 = _av3Vertices[i0];
+                        Vector3 v1 = _av3Vertices[i1];
+                        Vector3 v2 = _av3Vertices[i2];
 
+                        Vector3 normal = Vector3.Cross((v1 - v0), (v2 - v1));
+                        _av3NormalsIn[i0] += normal;
+                        _av3NormalsIn[i1] += normal;
+                        _av3NormalsIn[i2] += normal;
+                    }
+                }
+                for (int i = 0; i < n; i++)
+                {
+                    _av3NormalsIn[i] = _av3NormalsIn[i].normalized;
+                }
+            }
             this._meshOut = meshOut;
 
             _assignVertices = _assignVertices ?? (arr => this._meshOut.vertices = arr);
@@ -879,11 +915,22 @@ namespace Chaos
             }
         }
 
-        void AddVertices(Vector3[] listVertices, Vector3[] listVerticesWorld)
+        void AddVertices(Vector3[] listVertices, Vector3[] listVerticesWorld, Mesh mesh)
         {
+            Vector2[] uvs = mesh.uv;
+            Vector3[] normals = mesh.normals;
             for (int i = 0; i < listVertices.Length; i++)
             {
-                Vertex v = new Vertex(listVertices[i], listVerticesWorld[i], i);
+                Vertex v = new Vertex(listVertices[i], listVerticesWorld[i], i, uvs[i], normals[i]);
+                for (int j = 0; j < m_listVertices.Count; j++)
+                {
+                    Vertex u = m_listVertices[j];
+                    if (Vector3.Distance(v.m_v3Position, u.m_v3Position) / m_fOriginalMeshSize < float.Epsilon)
+                    {
+                        v.m_listNeighbors.Add(u);
+                        u.m_listNeighbors.Add(v);
+                    }
+                }
                 m_listVertices.Add(v);
             }
         }
@@ -990,7 +1037,8 @@ namespace Chaos
         private bool m_bUseEdgeLength = true;
         [SerializeField, HideInInspector]
         bool m_bUseCurvature = true, m_bProtectTexture = true, m_bLockBorder = true;
-
+        [SerializeField, HideInInspector]
+        float _borderCurvature = 2f;
         private Action<Vector3[]> _assignVertices;
         private Action<Vector3[]> _assignNormals;
         private Action<Vector4[]> _assignTangents;

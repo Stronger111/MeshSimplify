@@ -47,7 +47,7 @@ namespace Chaos
 
         public bool UseEdgeLength;
         public bool UseCurvature;
-        public bool LockBorder;
+        public float BorderCurvature;
         public float OriginalMeshSize;
 
         public void Execute(int index)
@@ -114,47 +114,52 @@ namespace Chaos
         {
             bool bUseEdgeLength = UseEdgeLength;
             bool bUseCurvature = UseCurvature;
-            bool bLockBorder = LockBorder;
+            float fBorderCurvature = BorderCurvature;
 
             int i;
             float fEdgeLength = bUseEdgeLength ? (Vector3.Magnitude(v.Position - u.Position) / OriginalMeshSize) : 1.0f;
             float fCurvature = 0.001f;
 
-            List<StructTriangle> sides = new List<StructTriangle>();
-
-            for (i = 0; i < u.FaceCount; i++)
+            if (fEdgeLength < float.Epsilon)
             {
-                StructTriangle ut = Triangles[u.Faces[i]];
-                if (HasVertex(ut, v.ID))
-                {
-                    sides.Add(ut);
-                }
+                return fBorderCurvature;
             }
-
-            if (bUseCurvature)
+            else
             {
+                List<StructTriangle> sides = new List<StructTriangle>();
+
                 for (i = 0; i < u.FaceCount; i++)
                 {
-                    float fMinCurv = 1.0f;
-
-                    for (int j = 0; j < sides.Count; j++)
+                    StructTriangle ut = Triangles[u.Faces[i]];
+                    if (HasVertex(ut, v.ID))
                     {
-                        float dotprod = Vector3.Dot(Triangles[u.Faces[i]].Normal, sides[j].Normal);
-                        fMinCurv = Mathf.Min(fMinCurv, (1.0f - dotprod) / 2.0f);
+                        sides.Add(ut);
                     }
-
-                    fCurvature = Mathf.Max(fCurvature, fMinCurv);
                 }
-            }
+                if (bUseCurvature)
+                {
+                    for (i = 0; i < u.FaceCount; i++)
+                    {
+                        float fMinCurv = 1.0f;
 
-            if (u.IsBorder == 1 && sides.Count > 1)
-            {
-                fCurvature = 1.0f;
-            }
+                        for (int j = 0; j < sides.Count; j++)
+                        {
+                            float dotprod = Vector3.Dot(Triangles[u.Faces[i]].Normal, sides[j].Normal);
+                            fMinCurv = Mathf.Min(fMinCurv, (1.0f - dotprod) / 2.0f);
+                        }
 
-            if (bLockBorder && u.IsBorder == 1)
-            {
-                fCurvature = float.MaxValue;
+                        fCurvature = Mathf.Max(fCurvature, fMinCurv);
+                    }
+                }
+                if (u.IsBorder == 1 && sides.Count > 1)
+                {
+                    fCurvature = 1.0f;
+                }
+
+                if (fBorderCurvature > 1 && u.IsBorder == 1)
+                {
+                    fCurvature = fBorderCurvature;
+                }
             }
 
             fCurvature += fRelevanceBias;
@@ -166,12 +171,12 @@ namespace Chaos
 
     public static class CostCompution
     {
-        public unsafe static void Compute(List<Vertex> vertices, TriangleList[] triangleLists, RelevanceSphere[] aRelevanceSpheres, bool bUseEdgeLength, bool bUseCurvature, bool bLockBorder, float fOriginalMeshSize, float[] costs, int[] collapses)
+        public unsafe static void Compute(List<Vertex> vertices, TriangleList[] triangleLists, RelevanceSphere[] aRelevanceSpheres, bool bUseEdgeLength, bool bUseCurvature, float bBorderCurvature, float fOriginalMeshSize, float[] costs, int[] collapses)
         {
             ComputeCostJob job = new ComputeCostJob();
             job.UseEdgeLength = bUseEdgeLength;
             job.UseCurvature = bUseCurvature;
-            job.LockBorder = bLockBorder;
+            job.BorderCurvature = bBorderCurvature;
             job.OriginalMeshSize = fOriginalMeshSize;
             List<StructTriangle> structTriangles = new List<StructTriangle>();
             int intAlignment = UnsafeUtility.SizeOf<int>();

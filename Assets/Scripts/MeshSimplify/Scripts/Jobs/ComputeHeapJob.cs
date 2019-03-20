@@ -77,7 +77,7 @@ public unsafe struct ComputeHeapJob : IJob
     public NativeArray<int> idToHeapIndex;
     public bool UseEdgeLength;
     public bool UseCurvature;
-    public bool LockBorder;
+    public float fBorderCurvature;
     public float OriginalMeshSize;
     [NativeDisableContainerSafetyRestriction]
     public NativeList<int> tmpVerticesList;
@@ -213,44 +213,53 @@ public unsafe struct ComputeHeapJob : IJob
     {
         bool bUseEdgeLength = UseEdgeLength;
         bool bUseCurvature = UseCurvature;
-        bool bLockBorder = LockBorder;
+        float borderCurvature = fBorderCurvature;
 
         int i;
         float fEdgeLength = bUseEdgeLength ? (Vector3.Magnitude(v.Position - u.Position) / OriginalMeshSize) : 1.0f;
         float fCurvature = 0.001f;
-        List<TriangleStruct> sides = new List<TriangleStruct>();
-        for (i = 0; i < u.currentFaceCount; i++)
+
+        if (fEdgeLength < float.Epsilon)
         {
-            TriangleStruct ut = GetTriangles(u.pfaces.Get<int>(i));
-            if (HasVertex(ut, v.ID))
-            {
-                sides.Add(ut);
-            }
+            return borderCurvature * (1 - Vector3.Dot(u.Normal, v.Normal) + 2 * Vector3.Distance(u.UV, v.UV));
         }
-        if (bUseCurvature)
+        else
         {
+            List<TriangleStruct> sides = new List<TriangleStruct>();
             for (i = 0; i < u.currentFaceCount; i++)
             {
-                float fMinCurv = 1.0f;
-
-                for (int j = 0; j < sides.Count; j++)
+                TriangleStruct ut = GetTriangles(u.pfaces.Get<int>(i));
+                if (HasVertex(ut, v.ID))
                 {
-                    float dotprod = Vector3.Dot(GetTriangles(u.pfaces.Get<int>(i)).Normal, sides[j].Normal);
-                    fMinCurv = Mathf.Min(fMinCurv, (1.0f - dotprod) / 2.0f);
+                    sides.Add(ut);
                 }
-                fCurvature = Mathf.Max(fCurvature, fMinCurv);
-
             }
-        }
-        bool isBorder = u.IsBorder(triangles);
-        if (isBorder && sides.Count > 1)
-        {
-            fCurvature = 1.0f;
-        }
 
-        if (bLockBorder && isBorder)
-        {
-            fCurvature = MAX_VERTEX_COLLAPSE_COST;
+            if (bUseCurvature)
+            {
+                for (i = 0; i < u.currentFaceCount; i++)
+                {
+                    float fMinCurv = 1.0f;
+
+                    for (int j = 0; j < sides.Count; j++)
+                    {
+                        float dotprod = Vector3.Dot(GetTriangles(u.pfaces.Get<int>(i)).Normal, sides[j].Normal);
+                        fMinCurv = Mathf.Min(fMinCurv, (1.0f - dotprod) / 2.0f);
+                    }
+                    fCurvature = Mathf.Max(fCurvature, fMinCurv);
+
+                }
+            }
+            bool isBorder = u.IsBorder(triangles);
+            if (isBorder && sides.Count > 1)
+            {
+                fCurvature = 1.0f;
+            }
+
+            if (borderCurvature > 1 && isBorder)
+            {
+                fCurvature = borderCurvature;
+            }
         }
 
         fCurvature += fRelevanceBias;
@@ -280,14 +289,14 @@ public class ComputeHeap
     private int[] m_aVertexPermutation;
     private int[] m_VertexHeap;
     private bool isHandle = false;
-    public unsafe void Compute(List<Vertex> vertices, Mesh m_OriginalMesh, TriangleList[] triangleArray, RelevanceSphere[] aRelevanceSpheres, float[] costs, int[] collapses, int[] m_aVertexPermutation, int[] m_VertexHeap, bool bUseEdgeLength, bool bUseCurvature, bool bLockBorder, float fOriginalMeshSize)
+    public unsafe void Compute(List<Vertex> vertices, Mesh m_OriginalMesh, TriangleList[] triangleArray, RelevanceSphere[] aRelevanceSpheres, float[] costs, int[] collapses, int[] m_aVertexPermutation, int[] m_VertexHeap, bool bUseEdgeLength, bool bUseCurvature, float bBorderCurvature, float fOriginalMeshSize)
     {
         computerHeapJob = new ComputeHeapJob();
         this.m_aVertexPermutation = m_aVertexPermutation;
         this.m_VertexHeap = m_VertexHeap;
         computerHeapJob.UseEdgeLength = bUseEdgeLength;
         computerHeapJob.UseCurvature = bUseCurvature;
-        computerHeapJob.LockBorder = bLockBorder;
+        computerHeapJob.fBorderCurvature = bBorderCurvature;
         computerHeapJob.OriginalMeshSize = fOriginalMeshSize;
         computerHeapJob.m_aVertexPermutation = new NativeArray<int>(m_aVertexPermutation, Allocator.TempJob);
         computerHeapJob.m_aVertexMap = new NativeArray<int>(m_VertexHeap, Allocator.TempJob);
@@ -308,6 +317,8 @@ public class ComputeHeap
                 Position = v.m_v3Position,
                 collapse = collapses[i] == -1 ? -1 : vertices[collapses[i]].m_nID,
                 isBorder = v.IsBorder() ? 1 : 0,
+                Normal = v.Normal,
+                UV = v.UV,
             };
             sv.NewVertexNeighbors(v.m_listNeighbors.Count, intSize, intAlignment, Allocator.TempJob);
             sv.NewFaceTriangle(v.m_listFaces.Count, intSize, intAlignment, Allocator.TempJob);
