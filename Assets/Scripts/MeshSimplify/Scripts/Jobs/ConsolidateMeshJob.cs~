@@ -1,0 +1,321 @@
+﻿using System.Collections;
+using System.Collections.Generic;
+using UnityEngine;
+using Unity.Collections;
+using Unity.Jobs;
+using Unity.Collections.LowLevel.Unsafe;
+using Chaos;
+public struct ConsolidateTrianglesJob : IJob
+{
+    public NativeArray<int> triangles;
+    [ReadOnly]
+    public NativeArray<int> permutation;
+    [ReadOnly]
+    public NativeArray<int> collapseMap;
+    public NativeArray<int> _vertexMap;
+    [ReadOnly]
+    public int nVertices;
+    [ReadOnly]
+    public int nSubMesh;
+    public NativeArray<int> _aTriangleCount;
+    public int n;
+    public void Execute()
+    {
+        for (int i = 0; i < triangles.Length; i += 3)
+        {
+            int idx0 = triangles[i];
+            int idx1 = triangles[i + 1];
+            int idx2 = triangles[i + 2];
+            while (permutation[idx0] >= nVertices)
+            {
+                int idx = collapseMap[idx0];
+                if (idx == -1 || idx1 == idx || idx2 == idx)
+                {
+                    idx0 = -1;
+                    break;
+                }
+                idx0 = idx;
+            }
+            while (permutation[idx1] >= nVertices)
+            {
+                int idx = collapseMap[idx1];
+                if (idx == -1 || idx0 == idx || idx2 == idx)
+                {
+                    idx1 = -1;
+                    break;
+                }
+                idx1 = idx;
+            }
+            while (permutation[idx2] >= nVertices)
+            {
+                int idx = collapseMap[idx2];
+                if (idx == -1 || idx1 == idx || idx0 == idx)
+                {
+                    idx2 = -1;
+                    break;
+                }
+                idx2 = idx;
+            }
+
+            if (idx0 == -1 || idx1 == -1 || idx2 == -1)
+            {
+                triangles[i] = -1;
+                triangles[i + 1] = -1;
+                triangles[i + 2] = -1;
+                continue;
+            }
+            if (_vertexMap[idx0] == -1)
+            {
+                _vertexMap[idx0] = n++;
+            }
+            triangles[i] = _vertexMap[idx0];
+            if (_vertexMap[idx1] == -1)
+            {
+                _vertexMap[idx1] = n++;
+            }
+            triangles[i + 1] = _vertexMap[idx1];
+            if (_vertexMap[idx2] == -1)
+            {
+                _vertexMap[idx2] = n++;
+            }
+            triangles[i + 2] = _vertexMap[idx2];
+
+            int l = triangles.Length;
+            int h = 0;
+            int t = l - 1;
+            while (h < t)
+            {
+                if (triangles[t] == -1)
+                {
+                    t -= 3;
+                    continue;
+                }
+                if (triangles[h] != -1)
+                {
+                    h += 3;
+                    continue;
+                }
+                triangles[h] = triangles[t - 2];
+                triangles[h + 1] = triangles[t - 1];
+                triangles[h + 2] = triangles[t];
+                triangles[t - 2] = -1;
+                triangles[t - 1] = -1;
+                triangles[t] = -1;
+                h += 3;
+                t -= 3;
+            }
+
+            if (t < l - 1)
+            {
+                _aTriangleCount[nSubMesh] = t + 1;
+                //#if DEBUG
+                // if (t >= 0 && triangles[t] == -1)
+                //{
+                //   throw new Exception("triangles[t] == -1");
+                //}
+                //#endif
+            }
+            else
+            {
+                _aTriangleCount[nSubMesh] = l;
+            }
+        }
+    }
+}
+public unsafe struct ConsolidateMeshDataJob : IJobParallelFor
+{
+    [ReadOnly]
+    public bool bUV1;
+    [ReadOnly]
+    public bool bUV2;
+    [ReadOnly]
+    public bool bNormal;
+    [ReadOnly]
+    public bool bTangent;
+    [ReadOnly]
+    public bool bColor32;
+    [ReadOnly]
+    public bool bBone;
+    //临时变量
+    public Vector2 tmpUV;
+    public Vector2 tmpUV2;
+    public Vector3 tmpNormal;
+    public Vector4 tmpTangent;
+    public Color32 tmpColor;
+    public BoneWeight tmpBoneWeight;
+
+    Vector2 tmpUVTwo;
+    Vector2 tmpUV2Two;
+    Vector3 tmpNormalTwo;
+    Vector4 tmpTangentTwo;
+    Color32 tmpColorTwo;
+    BoneWeight tmpBoneWeightTwo;
+    [ReadOnly]
+    public NativeArray<MappingLinkedNode> mappingLinkNode;
+    [NativeDisableParallelForRestriction]
+    public NativeArray<Vector3> av3Vertices;
+    [NativeDisableParallelForRestriction]
+    public NativeArray<Vector2> av2Mapping1In;
+    [NativeDisableParallelForRestriction]
+    public NativeArray<Vector2> av2Mapping2In;
+    [NativeDisableParallelForRestriction]
+    public NativeArray<Vector3> av3NormalsIn;
+    [NativeDisableParallelForRestriction]
+    public NativeArray<Vector4> av4TangentsIn;
+    [NativeDisableParallelForRestriction]
+    public NativeArray<Color32> aColors32In;
+    [NativeDisableParallelForRestriction]
+    public NativeArray<BoneWeight> aBoneWeights;
+    public void Execute(int index)
+    {
+        MappingLinkedNode head = mappingLinkNode[index];
+        //取出head节点地址
+        MappingLinkedNode* node = &head;
+
+        int idx = node->Mapping;
+
+        Vector3 tmp = av3Vertices[idx];
+        if (bUV1) tmpUV = av2Mapping1In[idx];
+        if (bUV2) tmpUV2 = av2Mapping2In[idx];
+        if (bNormal) tmpNormal = av3NormalsIn[idx];
+        if (bTangent) tmpTangent = av4TangentsIn[idx];
+        if (bColor32) tmpColor = aColors32In[idx];
+        if (bBone) tmpBoneWeight = aBoneWeights[idx];
+        //位移一个头节点的法线和切线颜色数据以及骨骼数据
+        node = node->Next;
+        while (node != null)
+        {
+            int mIdx = node->Mapping;
+            Vector3 tmp_ = av3Vertices[mIdx];
+            if (bUV1) tmpUVTwo = av2Mapping1In[mIdx];
+            if (bUV2) tmpUV2Two = av2Mapping2In[mIdx];
+            if (bNormal) tmpNormalTwo = av3NormalsIn[mIdx];
+            if (bTangent) tmpTangentTwo = av4TangentsIn[mIdx];
+            if (bColor32) tmpColorTwo = aColors32In[mIdx];
+            if (bBone) tmpBoneWeightTwo = aBoneWeights[mIdx];
+
+            av3Vertices[mIdx] = tmp;
+
+            if (bUV1) av2Mapping1In[mIdx] = tmpUV;
+            if (bUV2) av2Mapping2In[mIdx] = tmpUV2;
+            if (bNormal) av3NormalsIn[mIdx] = tmpNormal;
+            if (bTangent) av4TangentsIn[mIdx] = tmpTangent;
+            if (bColor32) aColors32In[mIdx] = tmpColor;
+            if (bBone) aBoneWeights[mIdx] = tmpBoneWeight;
+
+            tmp = tmp_;
+            tmpUV = tmpUVTwo;
+            tmpUV2 = tmpUV2Two;
+            tmpNormal = tmpNormalTwo;
+            tmpTangent = tmpTangentTwo;
+            tmpColor = tmpColorTwo;
+            tmpBoneWeight = tmpBoneWeightTwo;
+            MappingLinkedNode* oldNode = node;
+            node = node->Next;
+            UnsafeUtility.Free(oldNode, Allocator.TempJob);
+        }
+    }
+}
+public struct InitVertexMapJob : IJobParallelFor
+{
+    public NativeArray<int> vertexMap;
+    public void Execute(int index)
+    {
+        vertexMap[index] = -1;
+    }
+}
+public static class ConsolidateMeshExpend
+{
+    /// <summary>
+    /// 初始化_vertexMap数组
+    /// </summary>
+    /// <param name="_vertexMap"></param>
+    public static void InitVertexMapValue(int[] _vertexMap)
+    {
+        InitVertexMapJob job = new InitVertexMapJob();
+        job.vertexMap = new NativeArray<int>(_vertexMap, Allocator.TempJob);
+        JobHandle handle = job.Schedule(_vertexMap.Length, 1);
+        handle.Complete();
+        job.vertexMap.CopyTo(_vertexMap);
+        job.vertexMap.Dispose();
+    }
+    /// <summary>
+    /// 计算Mesh
+    /// </summary>
+    /// <param name="triangles"></param>
+    /// <param name="permutation"></param>
+    /// <param name="collapseMap"></param>
+    /// <param name="_vertexMap"></param>
+    public static void ConsolidateMeshJob(int[] triangles, int[] permutation, int[] collapseMap, int[] _vertexMap, int[] _aTriangleCount, int vertexCount, int subMesh, int n)
+    {
+        //向Job传送数据
+        ConsolidateTrianglesJob job = new ConsolidateTrianglesJob();
+        job.triangles = new NativeArray<int>(triangles, Allocator.TempJob);
+        job.permutation = new NativeArray<int>(permutation, Allocator.TempJob);
+        job.collapseMap = new NativeArray<int>(collapseMap, Allocator.TempJob);
+        job._vertexMap = new NativeArray<int>(_vertexMap, Allocator.TempJob);
+        job._aTriangleCount = new NativeArray<int>(_aTriangleCount, Allocator.TempJob);
+        job.nVertices = vertexCount;
+        job.nSubMesh = subMesh;
+        job.n = n;
+        JobHandle handle = job.Schedule();
+        handle.Complete();
+        job.triangles.CopyTo(triangles);
+        job._vertexMap.CopyTo(_vertexMap);
+        job.n = n;
+        job._aTriangleCount.CopyTo(_aTriangleCount);
+        job.triangles.Dispose();
+        job.permutation.Dispose();
+        job.collapseMap.Dispose();
+        job._vertexMap.Dispose();
+        job._aTriangleCount.Dispose();
+    }
+
+    public static void ConsolidateMeshDataJobExecute(NativeArray<MappingLinkedNode> mapingLinkNode, bool bUV1, bool bUV2, bool bNormal, bool bTangent, bool bColor32, bool bBone, Vector3[] av3Vertices,
+       Vector2[] av2Mapping1In, Vector2[] av2Mapping2In, Vector3[] av3NormalsIn, Vector4[] av4TangentsIn, Color32[] aColors32In, BoneWeight[] aBoneWeights
+        )
+    {
+        ConsolidateMeshDataJob job = new ConsolidateMeshDataJob();
+        job.mappingLinkNode = new NativeArray<MappingLinkedNode>(mapingLinkNode, Allocator.TempJob);
+        job.av3Vertices = new NativeArray<Vector3>(av3Vertices, Allocator.TempJob);
+        job.av2Mapping1In = new NativeArray<Vector2>(av2Mapping1In, Allocator.TempJob);
+        job.av2Mapping2In = new NativeArray<Vector2>(av2Mapping2In, Allocator.TempJob);
+        job.av3NormalsIn = new NativeArray<Vector3>(av3NormalsIn, Allocator.TempJob);
+        job.av4TangentsIn = new NativeArray<Vector4>(av4TangentsIn, Allocator.TempJob);
+        job.aColors32In = new NativeArray<Color32>(aColors32In, Allocator.TempJob);
+        job.aBoneWeights = new NativeArray<BoneWeight>(aBoneWeights, Allocator.TempJob);
+
+        job.bUV1 = bUV1;
+        job.bUV2 = bUV2;
+        job.bNormal = bNormal;
+        job.bTangent = bTangent;
+        job.bColor32 = bColor32;
+        job.bBone = bBone;
+
+        JobHandle handle = job.Schedule(mapingLinkNode.Length, 1);
+        handle.Complete();
+        bool isFinish = handle.IsCompleted;
+        //开始赋值数据
+        job.av3Vertices.CopyTo(av3Vertices);
+        job.av2Mapping1In.CopyTo(av2Mapping1In);
+        job.av2Mapping2In.CopyTo(av2Mapping2In);
+        job.av3NormalsIn.CopyTo(av3NormalsIn);
+        job.av4TangentsIn.CopyTo(av4TangentsIn);
+        job.aColors32In.CopyTo(aColors32In);
+        job.aBoneWeights.CopyTo(aBoneWeights);
+
+        job.mappingLinkNode.Dispose();
+        job.av3Vertices.Dispose();
+        job.av2Mapping1In.Dispose();
+        job.av2Mapping2In.Dispose();
+        job.av3NormalsIn.Dispose();
+        job.av4TangentsIn.Dispose();
+        job.aColors32In.Dispose();
+        job.aBoneWeights.Dispose();
+        mapingLinkNode.Dispose();
+    }
+}
+
+
+
+
